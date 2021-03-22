@@ -1,0 +1,7 @@
+{:board {:width 20
+         :height 40}
+ :pieces {:L {:shape [[1 0 0] 
+                      [1 1 1]
+                      [0 0 0]]}
+          :O {:shape [[1 1]
+                      [1 1]]}
