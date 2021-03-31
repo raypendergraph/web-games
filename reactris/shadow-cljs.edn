@@ -5,8 +5,9 @@
   "src/test"]
  :dependencies [
    [reagent "1.0.0"]
+   [rm-hull/big-bang "0.0.1-SNAPSHOT"]
  ]
- :dev-http {8080 ".public"}
+ :dev-http {8080 "public"}
  :builds
 {:default
   {:target :browser
