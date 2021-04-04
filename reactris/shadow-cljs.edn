@@ -3,12 +3,10 @@
  ["src/dev"
   "src/main"
   "src/test"]
+ :plugins [[lein-cljfmt "0.7.0"]]
  :dependencies [
    [reagent "1.0.0"]
-   [rm-hull/big-bang "0.0.1-SNAPSHOT"]
- ]
+   [rm-hull/big-bang "0.0.1-SNAPSHOT"]]
  :dev-http {8080 "public"}
- :builds
-{:default
-  {:target :browser
-   :modules {:main {:init-fn reactris.app/init}}}}}
+ :builds {:default {:target :browser
+                    :modules {:main {:init-fn reactris.app/init}}}}}
