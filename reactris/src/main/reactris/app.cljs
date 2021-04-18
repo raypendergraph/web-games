@@ -1,30 +1,30 @@
 (ns reactris.app
   (:require
-  ;;  [reagent.core :as r]
-   [reagent.dom :as rdom]
-   [big-bang.core :refer [big-bang!]]
-   [big-bang.events.browser :refer [which]])
+    ;;  [reagent.core :as r]
+    [reagent.dom :as rdom]
+    [big-bang.core :refer [big-bang!]]
+    [big-bang.events.browser :refer [which]])
   (:require-macros
-   [cljs.core.async.macros :refer [go]]))
+    [cljs.core.async.macros :refer [go]]))
 (defrecord Board [width height grid])
 (defrecord Cartesian [x y])
 (defrecord Rotation [shape profile])
 (defrecord Piece [key size rotations])
 (defrecord WorldState
-           [; The grid
-            grid
-    ; A Cartesian representing the upper-left point of the piece.
-            current-location
-    ; All augmented Pieces based on the config shapes.
-            pieces
-    ; The current Piece
-            piece-idx
-    ; The rotation index (0-4)
-            rotation-idx
-    ; The left, down and right hit profile for this piece in this rotation.
-            profile
-    ; The color of the current Piece.
-            current-color])
+  [; The board
+   board
+   ; A Cartesian representing the upper-left point of the piece.
+   current-position
+   ; All augmented Pieces based on the config shapes.
+   pieces
+   ; The current Piece
+   piece-idx
+   ; The rotation index (0-4)
+   rotation-idx
+   ; The left, down and right hit profile for this piece in this rotation.
+   profile
+   ; The color of the current Piece.
+   current-color])
 
 (def directions
   {37 :left
@@ -45,18 +45,30 @@
                 [1 1 1 1]
                 [0 0 0 0]]}})
 
+(defn first-when
+  "Returns a tuple of [index value] for the first position matching `predicate` for 
+  any `coll` where seqable? is true, else returns the value passed in. If the there are 
+  no matches for the predicate in `coll` then nil is returned."
+  [predicate coll] 
+  (if (seqable? coll)
+    (first (filter some? 
+                   (map-indexed (fn [i v] 
+                                  (when (predicate v) [i v]))
+                                coll)))
+    coll))
+
 (defn nth-column-vector [n matrix-like]
   "Plucks the nth column from a matrix like structure and returns it as a column vector."
   (vec
-   (for [row matrix-like]
-     (nth row n))))
+    (for [row matrix-like]
+      (nth row n))))
 
 (defn cw-rotate-matrix [matrix-like]
   "Rotates a matrix-like value such that the result is the same matrix except 0,0 is now w, 0 and w, 0 is now at
-   w, h.... etc.. Returns vector of rows (which is a vector of columns)"
+  w, h.... etc.. Returns vector of rows (which is a vector of columns)"
   (apply mapv (fn [& colls] 
                 (apply vector (reverse colls)))
-              matrix-like))
+         matrix-like))
 
 (defn movement-profile [rotations current]
   {:down (:profile (nth rotations
@@ -87,15 +99,15 @@
 
 (defn create-hit-profile
   "Creates hit profile of the body of the shape from the bottom of the sandbox.
-   A number will represent the offset of the body of the tetromino for this rotation.
-   A nil represents there is no possible collision on this column."
+  A number will represent the offset of the body of the tetromino for this rotation.
+  A nil represents there is no possible collision on this column."
   [shape]
   (let [; Since these are all square we just count the rows.
         column-count   (count shape)
-         ; The shape's columns as reversed lists because we care about the bottom.
+        ; The shape's columns as reversed lists because we care about the bottom.
         columns        (for [n (range column-count)]
                          (rseq (nth-column-vector n shape)))
-         ; A lazy list of the index of items that are not nil. We only care about the first one.
+        ; A lazy list of the index of items that are not nil. We only care about the first one.
         indices        (for [c columns]
                          (map-indexed (fn [i item]
                                         (if (nil? item) nil i))
@@ -117,20 +129,20 @@
   [tet-config]
   (for [row tet-config]
     (map
-     (fn [column]
-       (if (= column 0) nil true))
-     row)))
+      (fn [column]
+        (if (= column 0) nil true))
+      row)))
 
 (defn create-pieces
   "Creates precomputed Pieces from the configuration passed in."
   [pieces-config]
   (map
-   (fn [[key tet-config]]
-     (let [shape     (internalize-tetromino-config tet-config)
-           size      (count tet-config)
-           rotations (create-rotations shape)]
-       (Piece. key size rotations)))
-   (seq pieces-config)))
+    (fn [[key tet-config]]
+      (let [shape     (internalize-tetromino-config tet-config)
+            size      (count tet-config)
+            rotations (create-rotations shape)]
+        (Piece. key size rotations)))
+    (seq pieces-config)))
 
 (defn create-grid
   "Creates a `h` rows by `w` (a [][]) items grid of `empty-value` for storing gameplay state."
@@ -139,9 +151,9 @@
     (apply vector
            (take augmented-h
                  (repeat
-                  (apply vector
-                         (take w
-                               (repeat empty-value))))))))
+                   (apply vector
+                          (take w
+                                (repeat empty-value))))))))
 
 (defn create-world-state [config]
   (let [{{board-width :width
@@ -152,7 +164,7 @@
                                                       nil
                                                       (:size (apply max-key :size pieces)))
         piece-idx                        (rand-int (count pieces))
-        initial-position                 (Cartesian. (rand-int (- board-width
+        current-position                 (Cartesian. (rand-int (- board-width
                                                                   (:size (nth pieces piece-idx))))
                                                      0)
         board                            (Board. board-width board-height grid)
@@ -160,14 +172,42 @@
         rotation-idx                     0
         profile                          (movement-profile (:rotations (nth pieces piece-idx)) rotation-idx)
         color                            nil]
-    (WorldState. board initial-position pieces piece-idx rotation-idx profile color)))
+    (WorldState. board current-position pieces piece-idx rotation-idx profile color)))
 
 (defn update-state [event world-state])
 
 (defn move-piece [world-state direction])
 
-(defn board-size [world-state]
-  (let [board (world-state :board)]))
+(defn overflow?
+  [world-state direction] 
+  (let [{:keys [board position profile 
+                pieces piece-idx]}      world-state
+        {:keys [width height]}          board
+        {size :size}                    (nth pieces piece-idx)
+        {:keys [x y]}                   position
+        {:keys [left down right]}       profile
+        not-nil?                        (complement nil?)]
+    (case direction
+      :left (> 0 
+               (+ (dec x)
+                  (apply min 
+                         (filter not-nil?
+                                 left))))
+
+      :down (< height 
+               (+ (inc y)
+                  (- size 
+                     (apply min 
+                            (filter not-nil?
+                                    down)))))
+
+      :right (< width 
+                (+ (inc x)
+                   (- size 
+                      (apply min 
+                             (filter not-nil? 
+                                     right)))))
+      false)))
 
 (defn move-right [world-state]
   (let [board  (:board world-state)
@@ -177,14 +217,20 @@
         shape  (get-in world-state [:piece :shape])]
     (if (>= (:max-x world-state) x) nil nil)))
 
-(defn handle-key-down [event world-state]
-  (if-let [direction (directions (which event))]
-    (case direction
-      :drop  (assoc world-state :direction direction)
-      :left  (assoc world-state :direction direction)
-      :right (assoc world-state :direction direction)
-      world-state)
-    world-state))
+;(defn handle-key-down [event world-state]
+;  (if-let [direction                (directions (which event))
+;           {:down  down-collision 
+;            :left  left-collision
+;            :right right-collision} (board-collisions world-state direction)]
+;    (if (or right-collision left-collision)
+;      world-state
+;
+;    (case direction
+;      :drop  (assoc world-state :direction direction)
+;      :left  (assoc world-state :direction direction)
+;      :right (assoc world-state :direction direction)
+;      world-state)
+;    world-state))
 
 (defn draw! [world-state]
   (println "Render frame"))
@@ -196,8 +242,8 @@
 (defn init []
   (let [world-state (create-world-state config)]
     (rdom/render
-     [formatted-json world-state]
-     (.getElementById js/document "root"))))
+      [formatted-json world-state]
+      (.getElementById js/document "app"))))
 
 ;; (defn init []
 ;;   (go
