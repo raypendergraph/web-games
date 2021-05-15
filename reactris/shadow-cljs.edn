@@ -10,6 +10,7 @@
  :builds {:default {:target :browser
                     :modules {:main {:init-fn reactris.app/init}}}
           :test {:target    :browser-test
+                 :compiler-options {:source-map true}
                  :test-dir  "public/js/test"
                  :devtools  {:http-port          8081
                              :http-root          "public/js/test"}}}}

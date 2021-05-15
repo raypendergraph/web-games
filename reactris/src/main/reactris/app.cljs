@@ -6,6 +6,7 @@
     [big-bang.events.browser :refer [which]])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
+
 (defrecord Board [width height grid])
 (defrecord Cartesian [x y])
 (defrecord Rotation [shape profile])
@@ -14,7 +15,7 @@
   [; The board
    board
    ; A Cartesian representing the upper-left point of the piece.
-   current-position
+   position
    ; All augmented Pieces based on the config shapes.
    pieces
    ; The current Piece
@@ -24,7 +25,7 @@
    ; The left, down and right hit profile for this piece in this rotation.
    profile
    ; The color of the current Piece.
-   current-color])
+   color])
 
 (def directions
   {37 :left
@@ -57,11 +58,19 @@
                                 coll)))
     coll))
 
-(defn nth-column-vector [n matrix-like]
-  "Plucks the nth column from a matrix like structure and returns it as a column vector."
-  (vec
-    (for [row matrix-like]
-      (nth row n))))
+(defn nth-column-vector 
+  "Plucks the nth column from a matrix like structure and returns it as a column vector.
+  Additionally, passing `row-start` and `row-end` (exclusive) pulls a window."
+  ;;returns all rows
+  ([n matrix-vec] 
+   (nth-column-vector n matrix-vec 0 (count matrix-vec)))
+
+  ;; returns a window of rows.
+  ([n matrix-vec row-start row-end] 
+   (vec 
+     (for [row (subvec matrix-vec row-start row-end)]
+       (nth row n)))))
+
 
 (defn cw-rotate-matrix [matrix-like]
   "Rotates a matrix-like value such that the result is the same matrix except 0,0 is now w, 0 and w, 0 is now at
@@ -83,19 +92,14 @@
   and the hit profile of the right or left side. This can be precalculated per shape rotation."
   [board piece rotation-idx]
   (let [rotations (:rotations piece)
-        profile         (movement-profile rotations rotation-idx)
-        piece-size      (:size piece)
-        board-width     (:width board)
-        board-height    (:height board)
-        right-adjust    (apply min (:right profile))
-        left-adjust     (apply min (:left profile))
-        vertical-adjust (apply min (:down profile))]
-    {:left (- 0 left-adjust)
-     :right (+ (- board-width
-                  piece-size)
-               right-adjust)
-     :down (+ vertical-adjust
-              (- board-height piece-size))}))
+        profile         (movement-profile rotations rotation-idx)]
+    {:left  (- 0 (apply min (:left profile)))
+     :right (+ (- (:width board)
+                  (:size piece))
+               (apply min (:right profile)))
+     :down  (+ (apply min (:down profile))
+               (- (:height board) 
+                  (:size piece)))}))
 
 (defn create-hit-profile
   "Creates hit profile of the body of the shape from the bottom of the sandbox.
@@ -127,22 +131,21 @@
   "Takes a Tetromino configuration and uses nil for blanks and true for the shape body as this is a more advantageous
   scenario for Clojure."
   [tet-config]
-  (for [row tet-config]
-    (map
-      (fn [column]
-        (if (= column 0) nil true))
-      row)))
+  (vec (for [row tet-config]
+         (map
+           (fn [column]
+             (if (= column 0) nil true))
+           row))))
 
 (defn create-pieces
   "Creates precomputed Pieces from the configuration passed in."
   [pieces-config]
-  (map
-    (fn [[key tet-config]]
-      (let [shape     (internalize-tetromino-config tet-config)
-            size      (count tet-config)
-            rotations (create-rotations shape)]
-        (Piece. key size rotations)))
-    (seq pieces-config)))
+  (map (fn [[key tet-config]]
+         (let [shape     (internalize-tetromino-config tet-config)
+               size      (count tet-config)
+               rotations (create-rotations shape)]
+           (Piece. key size rotations)))
+       (seq pieces-config)))
 
 (defn create-grid
   "Creates a `h` rows by `w` (a [][]) items grid of `empty-value` for storing gameplay state."
@@ -188,19 +191,17 @@
         {:keys [left down right]}       profile
         not-nil?                        (complement nil?)]
     (case direction
-      :left (> 0 
-               (+ (dec x)
-                  (apply min 
-                         (filter not-nil?
-                                 left))))
-
-      :down (< height 
-               (+ (inc y)
-                  (- size 
-                     (apply min 
-                            (filter not-nil?
-                                    down)))))
-
+      :left  (> 0 
+                (+ (dec x)
+                   (apply min 
+                          (filter not-nil?
+                                  left))))
+      :down  (< height 
+                (+ (inc y)
+                   (- size 
+                      (apply min 
+                             (filter not-nil?
+                                     down)))))
       :right (< width 
                 (+ (inc x)
                    (- size 
@@ -209,48 +210,98 @@
                                      right)))))
       false)))
 
-(defn move-right [world-state]
-  (let [board  (:board world-state)
-        height (:height board)
-        width  (:width board)
-        [x y]  (:position world-state)
-        shape  (get-in world-state [:piece :shape])]
-    (if (>= (:max-x world-state) x) nil nil)))
 
-;(defn handle-key-down [event world-state]
-;  (if-let [direction                (directions (which event))
-;           {:down  down-collision 
-;            :left  left-collision
-;            :right right-collision} (board-collisions world-state direction)]
-;    (if (or right-collision left-collision)
-;      world-state
-;
-;    (case direction
-;      :drop  (assoc world-state :direction direction)
-;      :left  (assoc world-state :direction direction)
-;      :right (assoc world-state :direction direction)
-;      world-state)
-;    world-state))
+(defn directional-hit?
+  [world-state direction]
+  (let [grid        (get-in world-state [:board :grid])
+        position    (:position world-state)
+        piece       (nth (:pieces world-state) 
+                         (:piece-idx world-state))
+        profile     (get (:profile world-state) direction)
+        ;; zip the column offsets with the x coordinate
+        piece-size  (:size piece)
+        ;; the y index of the bottom of the piece in terms of the grid
+        bottom-idx  (dec (+ (:y position) (:size piece)))
+        ;; zip of the  [x coordinate , coordinate of the profile in terms of the grid].
+        column-defs (map vector (range (:x position) piece-size)
+                         (map (fn [y-offset] 
+                                (- bottom-idx y-offset)) 
+                              profile))
+        not-nil?    (complement nil?)
+        _  (println ">>" column-defs )]
+    ;; If any column in front of an occupied block is present then a hit will result.
+    (not-nil? (some not-nil? 
+                    (flatten (for [[x y-edge] column-defs]
+                               (nth-column-vector x grid y-edge (inc y-edge))))))))
 
-(defn draw! [world-state]
-  (println "Render frame"))
+(defn serial-assoc 
+  "Associates values into `associative` (presumably a vector) in order starting at 
+  `start-index` and extending the vector if required. Also works with maps, but why 
+  would you want to honeslty?"
+  [associative start-index new-values]
+  (let [indexes (range start-index 
+                       (+ start-index 
+                          (count new-values)))]
+    (apply assoc associative (interleave indexes new-values))))
 
-(defn formatted-json [world-state]
-  (fn []
-    [:pre (.stringify js/JSON (clj->js world-state) nil 4)]))
+(defn emplace-piece 
+  "Stores a piece on the board, in its final resting place."
+  [world-state]
+  (let [grid       (get-in world-state [:board :grid])
+        piece      (nth (:pieces world-state)  (:piece-idx world-state))
+        rotation   (nth (:rotations piece) (:rotation-idx world-state))
+        position   (:position world-state)
+        color      (:color world-state)
+        not-nil?   (complement nil?)
+        ;; Create cells to be rendered from shape of the current rotation.
+        new-cells  (for [row (:shape rotation)] 
+                     (for [cell row] 
+                       (when (not-nil? cell) color)))
+        ;; Extract the rows that the shape will occupy depending on the size. 
+        shape-rows (subvec grid (:y position) (+ (:y position)
+                                                 (:size piece)))
+        ;; Put the new cells into those rows.
+        new-rows   (for [[cells row] (map vector new-cells shape-rows)]
+                     (serial-assoc row (:x position) cells))
+        ;; Put the rows into the grid
+        new-grid   (serial-assoc grid (:y position) new-rows)]
+    (assoc-in world-state [:board :grid] new-grid)))
 
-(defn init []
-  (let [world-state (create-world-state config)]
-    (rdom/render
-      [formatted-json world-state]
-      (.getElementById js/document "app"))))
+(defn handle-key-down [event world-state]
+  (if-let [direction                (directions (which event))
+            ]
+    nil))
 
-;; (defn init []
-;;   (go
-;;    (let [world-state (create-world-state config)]
-;;      (do (println "Hello" world-state)
-;;      (big-bang!
-;;       :initial-state (create-world-state config)
-;;       :on-tick       update-state
-;;       :on-keydown    handle-key-down
-;;       :to-draw       draw!)))))
+  (defn draw! [world-state]
+    (rdom/render [
+
+  (defn formatted-json [world-state]
+    (fn []
+      [:pre (.stringify js/JSON (clj->js world-state) nil 3)]))
+
+  (defn init []
+    (let [world-state (create-world-state config)]
+      (rdom/render
+        [formatted-json world-state]
+        (.getElementById js/document "board"))))
+
+  (defn init []
+    (go
+      (let [world-state (create-world-state config)]
+        (do (println "Hello" world-state)
+            (big-bang!
+              :initial-state (create-world-state config)
+              :on-tick       update-state
+              :on-keydown    handle-key-down
+              :to-draw       draw!)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+;; View components
+;;;;;;;;;;;;;;;;;;;;;;;
+(defn cell [cartesion color] 
+  (fn [] 
+    [rect {:width="1" :height="1" :class=(name color)}]))
+
+(defn board [{:grid grid} 
+  (fn [] (for [
+    )
