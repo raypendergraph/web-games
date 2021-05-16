@@ -46,6 +46,60 @@
                 [1 1 1 1]
                 [0 0 0 0]]}})
 
+;;;;;;;;;;;;;;;;;;;;;;;
+;; View components
+;;;;;;;;;;;;;;;;;;;;;;;
+(defn cell [x y color] 
+  [:rect {:key (str x ":" y)
+          :x x
+          :y y
+          :width "1" 
+          :height "1" 
+          :class (str (name color) "cell")}])
+
+(defn piece [profile {x :x y :y}]
+    [:g {:id "piece"} 
+     (for [[y row]   (map-indexed vector profile)
+           [x fill?] (map-indexed vector row)
+           :when (true? fill?)
+           :let [_ (println x y fill?)]]
+       (cell x y :green))])
+
+(defn cell-group [grid]
+  [:g 
+   (for [[y row]   (map-indexed vector grid)
+         [x color] (map-indexed vector row)
+         :when ((complement nil?) color)]
+     (cell x y color)
+     )])
+
+(defn board [world-state]
+  (let [{:keys [board position pieces piece-idx rotation-idx]} world-state]
+    [:svg {:viewBox "0 0 20 40" :preservexmlns="http://www.w3.org/2000/svg"}
+     [:defs 
+      [:pattern {:id "grid" :width "1" :height "1" :patternUnits "userSpaceOnUse"}
+       [:path {:d "M 10 0 L 0 0 0 10" :fill "none" :stroke "gray" :stroke-width "0.1"}]]]
+     ;; draw the grid and occupied cells
+     (cell-group (get-in world-state [:board :grid]))
+     ;; draw the piece
+     (println "board" position)
+     (piece (get-in pieces [piece-idx :rotations rotation-idx :shape])
+            position)
+     [:rect {:width "100%" :height "100%" :fill "url(#grid)"}]]))
+
+;;;;;;;;;;;;;;;;;;;
+;; Helper functions
+;;;;;;;;;;;;;;;;;;;
+(defn serial-assoc 
+  "Associates values into `associative` (presumably a vector) in order starting at 
+  `start-index` and extending the vector if required. Also works with maps, but why 
+  would you want to honeslty?"
+  [associative start-index new-values]
+  (let [indexes (range start-index 
+                       (+ start-index 
+                          (count new-values)))]
+    (apply assoc associative (interleave indexes new-values))))
+
 (defn first-when
   "Returns a tuple of [index value] for the first position matching `predicate` for 
   any `coll` where seqable? is true, else returns the value passed in. If the there are 
@@ -122,10 +176,10 @@
 (defn create-rotations
   "Reads a Tetromino configuration and provides Rotation snapshots of the four rotations: 0 (default) to 3."
   [shape]
-  (map (fn [rotated-shape]
-         (let [hit-profile (create-hit-profile rotated-shape)]
-           (Rotation. rotated-shape hit-profile)))
-       (take 4 (iterate cw-rotate-matrix shape))))
+  (vec (map (fn [rotated-shape]
+              (let [hit-profile (create-hit-profile rotated-shape)]
+                (Rotation. rotated-shape hit-profile)))
+            (take 4 (iterate cw-rotate-matrix shape)))))
 
 (defn internalize-tetromino-config
   "Takes a Tetromino configuration and uses nil for blanks and true for the shape body as this is a more advantageous
@@ -140,12 +194,12 @@
 (defn create-pieces
   "Creates precomputed Pieces from the configuration passed in."
   [pieces-config]
-  (map (fn [[key tet-config]]
-         (let [shape     (internalize-tetromino-config tet-config)
-               size      (count tet-config)
-               rotations (create-rotations shape)]
-           (Piece. key size rotations)))
-       (seq pieces-config)))
+  (vec (map (fn [[key tet-config]]
+              (let [shape     (internalize-tetromino-config tet-config)
+                    size      (count tet-config)
+                    rotations (create-rotations shape)]
+                (Piece. key size rotations)))
+            (seq pieces-config))))
 
 (defn create-grid
   "Creates a `h` rows by `w` (a [][]) items grid of `empty-value` for storing gameplay state."
@@ -177,9 +231,7 @@
         color                            nil]
     (WorldState. board current-position pieces piece-idx rotation-idx profile color)))
 
-(defn update-state [event world-state])
 
-(defn move-piece [world-state direction])
 
 (defn overflow?
   [world-state direction] 
@@ -210,6 +262,16 @@
                                      right)))))
       false)))
 
+(defn move-piece [world-state direction]
+  (do (println "move" direction (overflow? world-state direction))
+  (case direction
+    :right (if (overflow? world-state :right)
+             world-state
+             (update-in world-state [:position :x] inc))
+    :left  (if (overflow? world-state :left)
+             world-state
+             (update-in world-state [:position :x] dec))
+    world-state)))
 
 (defn directional-hit?
   [world-state direction]
@@ -227,22 +289,12 @@
                          (map (fn [y-offset] 
                                 (- bottom-idx y-offset)) 
                               profile))
-        not-nil?    (complement nil?)
-        _  (println ">>" column-defs )]
+        not-nil?    (complement nil?)]
     ;; If any column in front of an occupied block is present then a hit will result.
     (not-nil? (some not-nil? 
                     (flatten (for [[x y-edge] column-defs]
                                (nth-column-vector x grid y-edge (inc y-edge))))))))
 
-(defn serial-assoc 
-  "Associates values into `associative` (presumably a vector) in order starting at 
-  `start-index` and extending the vector if required. Also works with maps, but why 
-  would you want to honeslty?"
-  [associative start-index new-values]
-  (let [indexes (range start-index 
-                       (+ start-index 
-                          (count new-values)))]
-    (apply assoc associative (interleave indexes new-values))))
 
 (defn emplace-piece 
   "Stores a piece on the board, in its final resting place."
@@ -267,41 +319,46 @@
         new-grid   (serial-assoc grid (:y position) new-rows)]
     (assoc-in world-state [:board :grid] new-grid)))
 
+
+;;;;;;;;;;;;;;;;;;;;;;
+;; Big Bang callbacks
+;;;;;;;;;;;;;;;;;;;;;;
+
+(defn update-state [event world-state]
+  world-state)
+
 (defn handle-key-down [event world-state]
-  (if-let [direction                (directions (which event))
-            ]
-    nil))
+  (if-let [direction (get directions (which event))]
+    (move-piece world-state direction)
+    world-state))
 
-  (defn draw! [world-state]
-    (rdom/render [
+(defn draw! [world-state]
+  (do (println "draw!" (:position world-state))
+  (let [root-element (.getElementById js/document "game")]
+    (rdom/render (board world-state)
+                 root-element))))
 
-  (defn formatted-json [world-state]
-    (fn []
-      [:pre (.stringify js/JSON (clj->js world-state) nil 3)]))
+(defn formatted-json [world-state]
+  (fn []
+    [:pre (.stringify js/JSON (clj->js world-state) nil 3)]))
 
-  (defn init []
-    (let [world-state (create-world-state config)]
-      (rdom/render
-        [formatted-json world-state]
-        (.getElementById js/document "board"))))
+(defn create-test-state [world-state]
+  (let [{{grid :grid} :board} world-state
+        new-grid (for [[r row] (map-indexed vector grid)]
+                   (if (> r 5) 
+                     (let [i (rand-int (count row))
+                           color (rand-nth [:red :green :blue])]
+                       (assoc row i :red))
+                     row))]
+    (assoc-in world-state [:board :grid] new-grid)))
 
-  (defn init []
-    (go
-      (let [world-state (create-world-state config)]
-        (do (println "Hello" world-state)
-            (big-bang!
-              :initial-state (create-world-state config)
-              :on-tick       update-state
-              :on-keydown    handle-key-down
-              :to-draw       draw!)))))
+(defn init []
+  (go
+    (let [world-state (create-world-state config)
+          test-state (create-test-state world-state)]
+      (big-bang!
+        :initial-state test-state
+        :on-tick       update-state
+        :on-keydown    handle-key-down
+        :to-draw       draw!))))
 
-;;;;;;;;;;;;;;;;;;;;;;;
-;; View components
-;;;;;;;;;;;;;;;;;;;;;;;
-(defn cell [cartesion color] 
-  (fn [] 
-    [rect {:width="1" :height="1" :class=(name color)}]))
-
-(defn board [{:grid grid} 
-  (fn [] (for [
-    )
