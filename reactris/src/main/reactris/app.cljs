@@ -46,6 +46,8 @@
                 [1 1 1 1]
                 [0 0 0 0]]}})
 
+(def keydown-ch (chan))
+(def tick-ch (chan))
 (def state (r/atom nil))
 
 (defn init []
@@ -53,11 +55,18 @@
     (.addEventListener js/document 
                        "keydown"
                        (fn [e]
-                         (println (get directions (.-which e) ))))))
+                         (let [direction (get directions (.-which e) )]
+                           (when ((complement nil?) direction) 
+                             (put! keydown-ch direction)))))
+    (js/setTimeout (fn [] (>!! tick-ch true) 1500))
 
-;;  (let [world-state (create-world-state config)
-;;          test-state (create-test-state world-state)]
-;;    )))
+    (async/go 
+      (let [direction (<! keydown-ch)]
+        (move-piece direction)))
+
+    (let [state (create-state config)
+          test-state (create-test-state state)]
+      (swap! state test-state))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; View 
@@ -71,12 +80,12 @@
           :class (str (name color) "cell")}])
 
 (defn piece [profile {x :x y :y}]
-    [:g {:id "piece"} 
-     (for [[y row]   (map-indexed vector profile)
-           [x fill?] (map-indexed vector row)
-           :when (true? fill?)
-           :let [_ (println x y fill?)]]
-       (cell x y :green))])
+  [:g {:id "piece"} 
+   (for [[y row]   (map-indexed vector profile)
+         [x fill?] (map-indexed vector row)
+         :when (true? fill?)
+         :let [_ (println x y fill?)]]
+     (cell x y :green))])
 
 (defn cell-group [grid]
   [:g 
@@ -85,14 +94,14 @@
          :when ((complement nil?) color)]
      (cell x y color))])
 
-(defn board [world-state]
-  (let [{:keys [board position pieces piece-idx rotation-idx]} world-state]
+(defn board [state]
+  (let [{:keys [board position pieces piece-idx rotation-idx]} state]
     [:svg {:viewBox "0 0 20 40" :preservexmlns="http://www.w3.org/2000/svg"}
      [:defs 
       [:pattern {:id "grid" :width "1" :height "1" :patternUnits "userSpaceOnUse"}
        [:path {:d "M 10 0 L 0 0 0 10" :fill "none" :stroke "gray" :stroke-width "0.1"}]]]
      ;; draw the grid and occupied cells
-     (cell-group (get-in world-state [:board :grid]))
+     (cell-group (get-in state [:board :grid]))
      ;; draw the piece
      (println "board" position)
      (piece (get-in pieces [piece-idx :rotations rotation-idx :shape])
@@ -101,8 +110,8 @@
 
 ;;(defn init []
 ;;  (go
-;;    (let [world-state (create-world-state config)
-;;          test-state (create-test-state world-state)]
+;;    (let [state (create-state config)
+;;          test-state (create-test-state state)]
 ;;      (big-bang!
 ;;        :initial-state test-state
 ;;        :on-tick       update-state
@@ -235,7 +244,7 @@
                           (take w
                                 (repeat empty-value))))))))
 
-(defn create-world-state [config]
+(defn create-state [config]
   (let [{{board-width :width
           board-height :height} :board} config
         pieces                           (create-pieces (:pieces config))
@@ -257,9 +266,9 @@
 
 
 (defn overflow?
-  [world-state direction] 
+  [state direction] 
   (let [{:keys [board position profile 
-                pieces piece-idx]}      world-state
+                pieces piece-idx]}      state
         {:keys [width height]}          board
         {size :size}                    (nth pieces piece-idx)
         {:keys [x y]}                   position
@@ -285,24 +294,24 @@
                                      right)))))
       false)))
 
-(defn move-piece [world-state direction]
-  (do (println "move" direction (overflow? world-state direction))
-  (case direction
-    :right (if (overflow? world-state :right)
-             world-state
-             (update-in world-state [:position :x] inc))
-    :left  (if (overflow? world-state :left)
-             world-state
-             (update-in world-state [:position :x] dec))
-    world-state)))
+(defn move-piece [state direction]
+  (do (println "move" direction (overflow? state direction))
+      (case direction
+        :right (if (overflow? state :right)
+                 state
+                 (update-in state [:position :x] inc))
+        :left  (if (overflow? state :left)
+                 state
+                 (update-in state [:position :x] dec))
+        state)))
 
 (defn directional-hit?
-  [world-state direction]
-  (let [grid        (get-in world-state [:board :grid])
-        position    (:position world-state)
-        piece       (nth (:pieces world-state) 
-                         (:piece-idx world-state))
-        profile     (get (:profile world-state) direction)
+  [state direction]
+  (let [grid        (get-in state [:board :grid])
+        position    (:position state)
+        piece       (nth (:pieces state) 
+                         (:piece-idx state))
+        profile     (get (:profile state) direction)
         ;; zip the column offsets with the x coordinate
         piece-size  (:size piece)
         ;; the y index of the bottom of the piece in terms of the grid
@@ -321,12 +330,12 @@
 
 (defn emplace-piece 
   "Stores a piece on the board, in its final resting place."
-  [world-state]
-  (let [grid       (get-in world-state [:board :grid])
-        piece      (nth (:pieces world-state)  (:piece-idx world-state))
-        rotation   (nth (:rotations piece) (:rotation-idx world-state))
-        position   (:position world-state)
-        color      (:color world-state)
+  [state]
+  (let [grid       (get-in state [:board :grid])
+        piece      (nth (:pieces state)  (:piece-idx state))
+        rotation   (nth (:rotations piece) (:rotation-idx state))
+        position   (:position state)
+        color      (:color state)
         not-nil?   (complement nil?)
         ;; Create cells to be rendered from shape of the current rotation.
         new-cells  (for [row (:shape rotation)] 
@@ -340,38 +349,38 @@
                      (serial-assoc row (:x position) cells))
         ;; Put the rows into the grid
         new-grid   (serial-assoc grid (:y position) new-rows)]
-    (assoc-in world-state [:board :grid] new-grid)))
+    (assoc-in state [:board :grid] new-grid)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;; Big Bang callbacks
 ;;;;;;;;;;;;;;;;;;;;;;
 
-(defn update-state [event world-state]
-  world-state)
+(defn update-state [event state]
+  state)
 
-(defn handle-key-down [event world-state]
+(defn handle-key-down [event state]
   (if-let [direction (get directions (which event))]
-    (move-piece world-state direction)
-    world-state))
+    (move-piece state direction)
+    state))
 
-(defn draw! [world-state]
-  (do (println "draw!" (:position world-state))
-  (let [root-element (.getElementById js/document "game")]
-    (rdom/render (board world-state)
-                 root-element))))
+(defn draw! [state]
+  (do (println "draw!" (:position state))
+      (let [root-element (.getElementById js/document "game")]
+        (rdom/render (board state)
+                     root-element))))
 
-(defn formatted-json [world-state]
+(defn formatted-json [state]
   (fn []
-    [:pre (.stringify js/JSON (clj->js world-state) nil 3)]))
+    [:pre (.stringify js/JSON (clj->js state) nil 3)]))
 
-(defn create-test-state [world-state]
-  (let [{{grid :grid} :board} world-state
+(defn create-test-state [state]
+  (let [{{grid :grid} :board} state
         new-grid (for [[r row] (map-indexed vector grid)]
                    (if (> r 5) 
                      (let [i (rand-int (count row))
                            color (rand-nth [:red :green :blue])]
                        (assoc row i :red))
                      row))]
-    (assoc-in world-state [:board :grid] new-grid)))
+    (assoc-in state [:board :grid] new-grid)))
 
