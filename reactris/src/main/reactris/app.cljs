@@ -1,6 +1,6 @@
 (ns reactris.app
   (:require
-    ;;  [reagent.core :as r]
+    [reagent.core :as r]
     [reagent.dom :as rdom]
     [big-bang.core :refer [big-bang!]]
     [big-bang.events.browser :refer [which]])
@@ -46,8 +46,21 @@
                 [1 1 1 1]
                 [0 0 0 0]]}})
 
+(def state (r/atom nil))
+
+(defn init []
+  (do 
+    (.addEventListener js/document 
+                       "keydown"
+                       (fn [e]
+                         (println (get directions (.-which e) ))))))
+
+;;  (let [world-state (create-world-state config)
+;;          test-state (create-test-state world-state)]
+;;    )))
+
 ;;;;;;;;;;;;;;;;;;;;;;;
-;; View components
+;; View 
 ;;;;;;;;;;;;;;;;;;;;;;;
 (defn cell [x y color] 
   [:rect {:key (str x ":" y)
@@ -70,8 +83,7 @@
    (for [[y row]   (map-indexed vector grid)
          [x color] (map-indexed vector row)
          :when ((complement nil?) color)]
-     (cell x y color)
-     )])
+     (cell x y color))])
 
 (defn board [world-state]
   (let [{:keys [board position pieces piece-idx rotation-idx]} world-state]
@@ -86,6 +98,17 @@
      (piece (get-in pieces [piece-idx :rotations rotation-idx :shape])
             position)
      [:rect {:width "100%" :height "100%" :fill "url(#grid)"}]]))
+
+;;(defn init []
+;;  (go
+;;    (let [world-state (create-world-state config)
+;;          test-state (create-test-state world-state)]
+;;      (big-bang!
+;;        :initial-state test-state
+;;        :on-tick       update-state
+;;        :on-keydown    handle-key-down
+;;        :to-draw       draw!))))
+;;
 
 ;;;;;;;;;;;;;;;;;;;
 ;; Helper functions
@@ -351,14 +374,4 @@
                        (assoc row i :red))
                      row))]
     (assoc-in world-state [:board :grid] new-grid)))
-
-(defn init []
-  (go
-    (let [world-state (create-world-state config)
-          test-state (create-test-state world-state)]
-      (big-bang!
-        :initial-state test-state
-        :on-tick       update-state
-        :on-keydown    handle-key-down
-        :to-draw       draw!))))
 
