@@ -4,7 +4,7 @@
     [reagent.dom :as rdom]
     [big-bang.core :refer [big-bang!]]
     [big-bang.events.browser :refer [which]]
-    [clojure.core.async :as async :refer [put! take! go-loop go chan]])
+    [clojure.core.async :as async :refer [put! take! go-loop chan]])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
 
@@ -50,7 +50,7 @@
 (def keydown-ch (chan))
 (def tick-ch (chan))
 (def state (r/atom nil))
-
+(def grid-cursor (r/cursor state [:board :grid]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; View 
@@ -71,37 +71,28 @@
          :let [_ (println x y fill?)]]
      (cell x y :green))])
 
-(defn cell-group [grid]
+(defn grid []
+  (let [_ (println "Almost")
+    grid @grid-cursor
+        _ (println "Right here.")]
   [:g
    (for [[y row] (map-indexed vector grid)
          [x color] (map-indexed vector row)
          :when ((complement nil?) color)]
-     (cell x y color))])
+     (cell x y color))]))
 
-(defn board [state]
-  (let [{:keys [board position pieces piece-idx rotation-idx]} state]
+(defn game []
+  ;; (let [{:keys [board position pieces piece-idx rotation-idx]} state]
     [:svg {:viewBox "0 0 20 40" :preservexmlns= "http://www.w3.org/2000/svg"}
      [:defs
       [:pattern {:id "grid" :width "1" :height "1" :patternUnits "userSpaceOnUse"}
        [:path {:d "M 10 0 L 0 0 0 10" :fill "none" :stroke "gray" :stroke-width "0.1"}]]]
      ;; draw the grid and occupied cells
-     (cell-group (get-in state [:board :grid]))
+     [grid] 
      ;; draw the piece
-     (println "board" position)
-     (piece (get-in pieces [piece-idx :rotations rotation-idx :shape])
-       position)
-     [:rect {:width "100%" :height "100%" :fill "url(#grid)"}]]))
-
-;;(defn init []
-;;  (go
-;;    (let [state (create-state config)
-;;          test-state (create-test-state state)]
-;;      (big-bang!
-;;        :initial-state test-state
-;;        :on-tick       update-state
-;;        :on-keydown    handle-key-down
-;;        :to-draw       draw!))))
-;;
+    ;;  (piece (get-in pieces [piece-idx :rotations rotation-idx :shape])
+    ;;    position)
+     [:rect {:width "100%" :height "100%" :fill "url(#grid)"}]])
 
 ;;;;;;;;;;;;;;;;;;;
 ;; Helper functions
@@ -343,23 +334,15 @@
 (defn update-state [event state]
   state)
 
-(defn handle-key-down [event state]
-  (if-let [direction (get directions (which event))]
-    (move-piece state direction)
-    state))
-
-(defn draw! [state]
-  (do (println "draw!" (:position state))
-      (let [root-element (.getElementById js/document "game")]
-        (rdom/render (board state)
-          root-element))))
 
 (defn formatted-json [state]
   (fn []
     [:pre (.stringify js/JSON (clj->js state) nil 3)]))
 
 (defn create-test-state [state]
-  (let [{{grid :grid} :board} state
+  (let [
+        {{grid :grid} :board} state
+_ (println state)
         new-grid (for [[r row] (map-indexed vector grid)]
                    (if (> r 5)
                      (let [i (rand-int (count row))
@@ -370,6 +353,8 @@
 
 
 (defn init []
+  (reset! state (create-test-state (create-state config)))
+
   (do
     (.addEventListener js/document
       "keydown"
@@ -379,8 +364,7 @@
             (go (>! keydown-ch
                     direction))))))
 
-    (js/setInterval (fn []
-                        (go (>! tick-ch true))) 2000)
+    (js/setInterval (fn [] (go (>! tick-ch true))) 2000)
 
     ;; Map tick events into the mandatory down movement.
     (go-loop []
@@ -392,11 +376,10 @@
     ;; Convert key down event changes into potentially new state and push
     ;; that into the state atom.
     (go-loop []
-             (let [direction (<! keydown-ch)]
-               ;;(swap! state (move-piece @state direction))
-               (println direction))
-             (recur))))
+       (let [direction (<! keydown-ch)]
+        (r/rswap! state (move-piece @state direction))
+        (recur)))
 
-;    (let [state (create-state config)
-;          test-state (create-test-state state)))
-;      (swap! state test-state))))
+    (rdom/render [game] (.getElementById js/document "game"))
+      
+      ))
