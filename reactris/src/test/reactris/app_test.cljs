@@ -21,9 +21,9 @@
             :TEST  [[1 1 1]
                     [1 1 1]
                     [1 1 1]]}})
-(def world-state (app/create-world-state config))
-
-(defn  index-of-piece [key world-state]
+(def state (app/create-state config))
+(def pieces (app/create-pieces (:pieces config)))
+(defn  index-of-piece [key]
   (first 
     (filter (complement nil?)
             (map-indexed (fn [i piece]
@@ -31,7 +31,7 @@
                                   (:key piece)) 
                              i 
                              nil))
-                         (:pieces world-state)))))
+                          pieces))))
 
 (deftest nth-column-vector__default-works
   (let [m           [[1 0 0 0]
@@ -59,45 +59,64 @@
          [5 1]))))
 
 (deftest overflow__left
-  (let [test-piece-idx (index-of-piece :TEST world-state)          
-        test-state     (assoc world-state 
-                              :position (app/Cartesian. 0 0)
-                              :piece-idx test-piece-idx)]
+  (let [test-piece-idx (index-of-piece :TEST)          
+        rotations      (get-in pieces [test-piece-idx :rotations])
+        rotation-idx   0
+        piece          (get pieces test-piece-idx)
+        rotation       (nth rotations rotation-idx)
+        profile        (app/movement-profile rotations rotation-idx) 
+        player         (app/Player. (app/Cartesian. 0 0)
+                                    test-piece-idx
+                                    0
+                                    profile
+                                    :blue)
+        _ (println player)
+        test-state     (assoc state :player player)]
     (do
-      (is (false? (app/overflow? test-state :down)))
-      (is (false? (app/overflow? test-state :right)))
-      (is (true?  (app/overflow? test-state :left))))))
+      (is (false? (app/overflow? test-state pieces :down)))
+      (is (false? (app/overflow? test-state pieces :right)))
+      (is (true?  (app/overflow? test-state pieces :left))))))
 
 
-(deftest overflow__right
-  (let [test-piece-idx (index-of-piece :TEST world-state)          
-        piece-size     (:size (nth (:pieces world-state) 
-                                   test-piece-idx))
-        board-width    (get-in world-state [:board :width])
-        test-state     (assoc world-state 
-                              :position (app/Cartesian. (- board-width piece-size) 0)
-                              :piece-idx test-piece-idx)]
-    (do
-      (is (false? (app/overflow? test-state :down)))
-      (is (true?  (app/overflow? test-state :right)))
-      (is (false? (app/overflow? test-state :left))))))
+ (deftest overflow__right
+   (let [test-piece-idx (index-of-piece :TEST)          
+         rotations      (get-in pieces [test-piece-idx :rotations])
+         rotation-idx   0
+         piece          (get pieces test-piece-idx)
+         profile        (app/movement-profile rotations rotation-idx) 
+         board          (:board state)
+         player         (app/Player. (app/Cartesian. (- (:width board) (:size piece)) 0)
+                                     test-piece-idx
+                                     rotation-idx
+                                     profile
+                                     :blue)
+         test-state     (assoc state :player player)]
+     (do
+       (is (false? (app/overflow? test-state pieces :down)))
+       (is (true?  (app/overflow? test-state pieces :right)))
+       (is (false? (app/overflow? test-state pieces :left))))))
 
-(deftest overflow__down
-  (let [test-piece-idx (index-of-piece :TEST world-state)          
-        piece-size     (:size (nth (:pieces world-state) 
-                                   test-piece-idx))
-        board-height   (get-in world-state [:board :height])
-        test-state     (assoc world-state 
-                              :position (app/Cartesian. piece-size (- board-height piece-size))
-                              :piece-idx test-piece-idx)]
-    (do
-      (is (true?  (app/overflow? test-state :down)))
-      (is (false? (app/overflow? test-state :right)))
-      (is (false? (app/overflow? test-state :left))))))
+ (deftest overflow__down
+   (let [test-piece-idx (index-of-piece :TEST)          
+         rotations      (get-in pieces [test-piece-idx :rotations])
+         rotation-idx   0
+         piece          (get pieces test-piece-idx)
+         profile        (app/movement-profile rotations rotation-idx) 
+         board          (:board state)
+         player         (app/Player. (app/Cartesian. (:size piece) (- (:height board) (:size piece)))
+                                     test-piece-idx
+                                     rotation-idx
+                                     profile
+                                     :blue)
+         test-state     (assoc state :player player)]
+     (do
+       (is (true?  (app/overflow? test-state pieces :down)))
+       (is (false? (app/overflow? test-state pieces :right)))
+       (is (false? (app/overflow? test-state pieces :left))))))
 
-(deftest create-hit-profile__works 
-  (let [piece    (nth (:pieces world-state)
-                      (index-of-piece :TESTB world-state))
+(deftest create-hit-profiles__works 
+  (let [piece    (nth pieces
+                      (index-of-piece :TESTB))
         profiles  (for [rotation (:rotations piece)]
                     (:profile rotation))]
     (do
@@ -110,16 +129,16 @@
       (is (= '(nil 2 1 0) 
              (nth profiles 3))))))
 
-(deftest emplace-piece__works
-  (let [test-piece-idx (index-of-piece :TESTB world-state)          
-        piece-size     (:size (nth (:pieces world-state) 
+(deftest update-grid__works
+  (let [test-piece-idx (index-of-piece :TESTB)          
+        piece-size     (:size (nth pieces 
                                    test-piece-idx))
-        board-width    (get-in world-state [:board :width])
-        test-state     (assoc world-state 
+        board-width    (get-in state [:board :width])
+        test-state     (assoc state 
                               :position (app/Cartesian. (- board-width piece-size) 0)
                               :color :red
                               :piece-idx test-piece-idx)]
-    (app/emplace-piece test-state)))
+    (app/update-grid (get-in test-state [:board :grid]) pieces (:player test-state))))
 
 (deftest serial-assoc__works 
   (do
@@ -131,27 +150,26 @@
          (app/serial-assoc [1 2 3] 0 ["one" "two" "three"] ))))
 
 (deftest directional-hit?__down-miss
-  (let [test-piece-idx (index-of-piece :TESTB world-state)          
-        pieces         (:pieces world-state)
-        piece-size     (:size (nth pieces test-piece-idx))
-        board-height   (get-in world-state [:board :height])
-        test-state     (assoc world-state 
-                              :position  (app/Cartesian. 0 (- board-height piece-size))
-                              :profile   (app/movement-profile (:rotations (nth pieces test-piece-idx))
-                                                               0)
-                              :color     :red
-                              :piece-idx test-piece-idx)]
-
-    (is (false? (app/directional-hit? test-state :down)))))
+  (let [test-piece-idx        (index-of-piece :TESTB)          
+        piece-size            (:size (nth pieces test-piece-idx))
+        {:keys [grid height]} (:board state)
+        player                (app/Player.  (app/Cartesian. 0 (- height piece-size))
+                                                  test-piece-idx
+                                                  0
+                                                  (app/movement-profile (:rotations 
+                                                              (nth pieces test-piece-idx)) 0)
+                                                  :red)
+        new-grid              (app/update-grid grid pieces player)]
+    (is (true? (app/directional-hit? new-grid player :down pieces)))))
 
 (deftest directional-hit?__down-hit
-  (let [test-piece-idx (index-of-piece :TEST world-state)          
-        pieces         (:pieces world-state)
+  (let [test-piece-idx (index-of-piece :TEST)          
         piece-size     (:size (nth pieces test-piece-idx))
-        board-height   (get-in world-state [:board :height])
-        test-state     (app/emplace-piece (assoc world-state :position  (app/Cartesian. 0 (- board-height piece-size))
-                                                             :profile   (app/movement-profile (:rotations (nth pieces test-piece-idx))
-                                                                                        0)
-                                                             :color     :red
-                                                             :piece-idx test-piece-idx))]
-    (is (true? (app/directional-hit? test-state :down)))))
+        {:keys [grid height]} (:board state)
+        player         (app/Player.  (app/Cartesian. 0 (- height piece-size))
+                                     test-piece-idx
+                                     0
+                                     (app/movement-profile (:rotations (nth pieces test-piece-idx)) 0)
+                                     :red)
+        new-grid                     (app/update-grid grid pieces player)]
+    (is (true? (app/directional-hit? new-grid player :down pieces)))))
