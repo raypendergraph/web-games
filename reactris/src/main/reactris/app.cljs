@@ -20,7 +20,7 @@
   {37 :left
    39 :right
    40 :drop
-   32 :rotate})
+   32 :drop})
 
 (def config
   {:board  {:width  20
@@ -261,9 +261,9 @@
       :left  (if (overflow? state pieces :left)
                 state
               (update-in state [:player :position :x] dec))
-      :down  (if (overflow? state pieces :down)
+      :drop  (if (overflow? state pieces :down)
                 state
-                (update-in state [:player :position :y] dec))
+                (update-in state [:player :position :y] inc))
       state))
 
 (defn directional-hit?
@@ -321,7 +321,8 @@
     (.addEventListener js/document
                        "keydown"
                        (fn [e]
-                         (let [direction (get directions (.-which e))]
+                         (let [direction (get directions (.-which e))
+                               _ (println "Key -> " direction)]
                            (when ((complement nil?) direction)
                              (go (>! keydown-ch
                                      direction))))))
@@ -340,7 +341,8 @@
     ;; that into the state atom.
     (go-loop []
       (let [direction (<! keydown-ch)]
-        (r/rswap! state (fn [state] 
+        (r/rswap! state (fn [state]
+                            (println direction)
                             (move-piece state direction)))
         (recur)))
     
