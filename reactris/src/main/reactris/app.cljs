@@ -1,10 +1,7 @@
 (ns reactris.app
   (:require
-    [clojure.spec.alpha :as s]
     [reagent.core :as r]
     [reagent.dom :as rdom]
-    [big-bang.core :refer [big-bang!]]
-    [big-bang.events.browser :refer [which]]
     [clojure.core.async :as async :refer [put! take! go-loop chan]])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
@@ -133,6 +130,7 @@
 ;; Initial defines and channels
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (def pieces (create-pieces (:pieces config)))
+(def colors [:blue :red :green :yellow])
 (def keydown-ch (chan))
 (def tick-ch (chan))
 (def state (r/atom nil))
@@ -148,7 +146,7 @@
               :y      y
               :width  "1"
               :height "1"
-              :class  (str (name color) "cell")}])
+              :class  (str (name color) "cell cell")}])
 
 (defn player []
       (let [{:keys [color piece-idx rotation-idx position]} @player-cursor
@@ -170,7 +168,7 @@
       [:svg {:viewBox "0 0 20 40" :preservexmlns "http://www.w3.org/2000/svg"}
        [:defs
         [:pattern {:id "grid" :width "1" :height "1" :patternUnits "userSpaceOnUse"}
-         [:path {:d "M 10 0 L 0 0 0 10" :fill "none" :stroke "gray" :stroke-width "0.1"}]]]
+         [:path {:d "M 10 0 L 0 0 0 10" :fill "none" :stroke "lightgray" :stroke-width "0.1"}]]]
        [:rect {:width "100%" :height "100%" :fill "url(#grid)"}]
        [grid]
        [player]])
@@ -212,6 +210,17 @@
                                  (take w
                                        (repeat empty-value))))))))
 
+(defn random-player [board pieces colors]
+      (let [piece-idx (rand-int (count pieces))
+            position (Cartesian. (rand-int (- (:width board)
+                                              (:size (nth pieces piece-idx))))
+                                 0)
+            rotation-idx (rand-int 4)
+            profiles (movement-profile (:rotations (nth pieces piece-idx)) rotation-idx)
+            color (rand-nth colors)
+            ]
+           (Player. position piece-idx rotation-idx profiles color)))
+
 (defn create-state [config]
       (let [{{board-width  :width
               board-height :height} :board} config
@@ -219,15 +228,10 @@
                               board-height
                               nil
                               (:size (apply max-key :size pieces)))
-            piece-idx (rand-int (count pieces))
-            position (Cartesian. (rand-int (- board-width
-                                              (:size (nth pieces piece-idx))))
-                                 0)
             board (Board. board-width board-height grid)
-            rotation-idx 0
-            profiles (movement-profile (:rotations (nth pieces piece-idx)) rotation-idx)
-            ;; TODO color
-            player (Player. position piece-idx rotation-idx profiles :blue)]
+            _ (println "before")
+            player (random-player board pieces colors)
+            _ (println "after")]
            (WorldState. board player)))
 
 (defn overflow?  [state pieces direction]
@@ -265,17 +269,15 @@
             profile                               (get profiles direction)
             piece-size                            (:size piece)
             ;; the y index of the bottom of the piece in terms of the grid
-            bottom-idx                            (dec (+ (:y position) (:size piece)))
+            bottom-idx                            (max 0 (dec (+ (:y position) (+ (:size piece) 1))))
             ;; zip of the  [x coordinate , coordinate of the profile in terms of the grid].
-            column-defs                           (mapv vector (range (:x position) piece-size)
-                                                       (map (fn [y-offset]
-                                                                (- bottom-idx y-offset))
-                                                            profile))
-            not-nil?                              (complement nil?)
-            _ (println column-defs)]
+            column-defs                           (mapv vector (range (:x position) (+ (:x position) piece-size))
+                                                        (mapv (fn [y-offset]
+                                                                  (- bottom-idx y-offset))
+                                                              profile))
+            not-nil?                              (complement nil?)]
 
            ;; If any column in front of an occupied block is present then a hit will result.
-
            (not-nil? (some not-nil?
                            (flatten (for [[x y-edge] column-defs]
                                          (nth-column-vector x grid y-edge (inc y-edge))))))))
@@ -298,34 +300,37 @@
             new-rows (for [[cells row] (map vector new-cells shape-rows)]
                           (serial-assoc row (:x position) cells))]
            ;; Put the rows into the grid
+
            (serial-assoc grid (:y position) new-rows)))
 
 
 (defn move-piece
       "Takes care of all concerns when a piece is moved either by the timer or by the user."
       [state direction]
-      (println )
       (if (overflow? state pieces direction)
         state
-        (let [grid (get-in [:board grid] state)
-              is-hit? (directional-hit? (get-in state [:board :grid]) (:player state) direction pieces)]
-             (if (and is-hit? (= direction :down))
-               (update-grid grid pieces player)
-               (case direction
-                     :right (update-in state [:player :position :x] inc)
-                     :left  (update-in state [:player :position :x] dec)
-                     :down  (update-in state [:player :position :y] inc)
-                     :rotate (rotate-piece state)
-                     state)))))
+        (let [grid (get-in state [:board :grid])
+              player (:player state)
+              is-hit? (directional-hit? grid (:player state) direction pieces)]
+              (if (and is-hit? (= direction :down))
+                (-> state
+                    (assoc-in [:board :grid] (update-grid grid pieces player))
+                    (assoc :player (random-player (:board state) pieces colors)))
+                (case direction
+                      :right (update-in state [:player :position :x] inc)
+                      :left  (update-in state [:player :position :x] dec)
+                      :down  (update-in state [:player :position :y] inc)
+                      :rotate (rotate-piece state)
+                      state)))))
 
 (defn create-test-state [state]
       (let [{{grid :grid} :board} state
-            new-grid (for [[r row] (map-indexed vector grid)]
-                          (if (> r 5)
-                            (let [i (rand-int (count row))
-                                  color (rand-nth [:red :green :blue])]
-                                 (assoc row i :red))
-                            row))]
+            new-grid (vec (for [[r row] (map-indexed vector grid)]
+                               (if (> r 5)
+                                 (let [i (rand-int (count row))
+                                       color (rand-nth [:red :green :blue])]
+                                      (assoc row i :red))
+                                 row)))]
            (assoc-in state [:board :grid] new-grid)))
 
 (defn init []
@@ -334,8 +339,7 @@
         (.addEventListener js/document
                            "keydown"
                            (fn [e]
-                               (let [direction (get directions (.-which e))
-                                     _ (println "Key -> " direction)]
+                               (let [direction (get directions (.-which e))]
                                     (when ((complement nil?) direction)
                                           (go (>! keydown-ch
                                                   direction))))))
@@ -346,8 +350,9 @@
         ;; Map tick events into the mandatory down movement.
         (go-loop []
                  (<! tick-ch)
-                 (println "Tick!")
+                 (println "Next tick")
                  (swap! state (fn [s] (move-piece s :down)))
+                 (println "Tick over")
                  (recur))
 
         ;; Convert key down event changes into potentially new state and push
@@ -355,7 +360,6 @@
         (go-loop []
                  (let [direction (<! keydown-ch)]
                       (r/rswap! state (fn [state]
-                                          (println direction)
                                           (move-piece state direction)))
                       (recur)))
 
